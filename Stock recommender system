@@ -1,0 +1,97 @@
+import sqlalchemy
+import pymysql
+pymysql.install_as_MySQLdb()
+indices = ['Nifty50','RTSI','Bovespa']
+
+# def schemacreator(index):
+#   engine = sqlalchemy.create_engine('mysql://root:mansigupta@localhost:3306/')
+#   engine.execute(sqlalchemy.schema.CreateSchema(index))
+# for index in indices:
+#   schemacreator(index)
+import pandas as pd
+nifty = pd.read_html('https://en.wikipedia.org/wiki/NIFTY_50')[1]
+#print(nifty)
+RTSI = pd.read_html('https://en.wikipedia.org/wiki/RTS_Index')[1]
+bovespa = pd.read_html('https://en.wikipedia.org/wiki/List_of_companies_listed_on_B3')[0]
+#print(RTSI)
+#print(bovespa)
+nifty = nifty.Symbol.to_list()
+bovespa = bovespa.Ticker.to_list()
+RTSI = RTSI['Ticker symbol'].to_list()
+bovespa = [i + '.SA' for i in bovespa]
+RTSI = [i + '.ME' for i in RTSI]
+nifty = [i + '.NS' for i in nifty]
+#print(bovespa)
+#print(RTSI)
+import yfinance as yf
+mapping = {'Nifty50':nifty,'Bovespa':bovespa,'RTSI':RTSI}
+"""for index in indices:
+    engine = sqlalchemy.create_engine('mysql://root:mansigupta@localhost:3306/'+ index)
+    for symbol in mapping[index]:
+        df = yf.download(symbol,start = '2020-01-01')
+        df = df.reset_index()
+        df.to_sql(symbol,engine)"""
+
+import ta
+import numpy as np
+engine = sqlalchemy.create_engine('mysql://root:mansigupta@localhost:3306/')
+def get_table(index):
+    query = f"""SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{index}'"""
+    df = pd.read_sql(query, engine)
+    df['Schema'] = index
+    return df
+def get_prices(a):
+     prices = []
+     for table, schema in zip(a.TABLE_NAME, a.Schema):
+        sql = schema + '.' + f'`{table}`'
+        #print(sql)
+        prices.append(pd.read_sql(f"""SELECT Date,Close FROM {sql}""",engine))
+     return prices
+
+nifty = get_table('Nifty50')
+#print(len(get_prices(bovespa2)))
+# print(get_table('Bovespa'))
+#print(get_prices(bovespa2))
+
+def MACD(df):
+    df['MACD_difference'] = ta.trend.macd_diff(df.Close)
+    df['Decision1'] = np.where((df.MACD_difference > 0) & (df.MACD_difference.shift(1) < 0), True, False)
+
+def GoldenCross(df):
+    df['SMA20'] = ta.trend.sma_indicator(df.Close, window = 20)
+    df['SMA50'] = ta.trend.sma_indicator(df.Close, window = 50)
+    df['signal'] = np.where(df['SMA20'] > df['SMA50'], True, False)
+    df['Decision2'] = df.signal.diff()
+
+def RSI(df):
+    df['RSI'] = ta.momentum.rsi(df.Close,window = 10)
+    df['SMA200'] = ta.trend.sma_indicator(df.Close,window = 200)
+    df['Decision3'] = np.where((df.Close > df.SMA200) & (df.RSI < 30), True, False)
+    # print(df['Decision3'].to_list())
+    # if df['Decision3'].to_string() == True :
+    #     print('Was true here')
+
+def combineresults(b):
+    prices = get_prices(b)
+    for f in prices:
+        MACD(f)
+        GoldenCross(f)
+        RSI(f)
+    return prices
+
+def recommendersystem(c):
+    indicators = ['Decision1','Decision2','Decision3']
+    for symbol,df in zip(c.TABLE_NAME,combineresults(c)):
+        if df.empty is False:
+            for indicator in indicators:
+                if df[indicator].iloc[-1] == True:
+                     print((f"{indicator} buying signal for " + symbol))
+
+# bovespa3 = combineresults(bovespa2)
+# print(bovespa3)
+# print(type(bovespa3))
+recommendersystem(nifty)
+
+
+#bovesp2 = bovespa2[(bovespa2['Decision3'] == 'True')]
+#print(bovespa2)
